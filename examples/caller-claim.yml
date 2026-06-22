@@ -1,0 +1,17 @@
+# Copy to `.github/workflows/claim.yml` in your project.
+# Handles claim/disclaim/propose/withdraw comments on issues.
+name: Claim bot
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  claim:
+    uses: leanprover-community/claim-bot/.github/workflows/claim-commands.yml@v1
+    with:
+      project-title: "My Project"   # the exact title of your Projects v2 board
+      default-ttl: "30d"            # set to "none" to disable expiry entirely
+      max-ttl: "90d"
+    secrets:
+      project-token: ${{ secrets.CLAIM_BOT_TOKEN }}

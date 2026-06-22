@@ -1,0 +1,75 @@
+name: claim-bot commands
+
+# Reusable workflow: handle `claim` / `disclaim` / `propose PR #N` / `withdraw PR #N`
+# comments. Adopters call this from a thin caller triggered by `issue_comment`.
+on:
+  workflow_call:
+    inputs:
+      project-title:
+        required: true
+        type: string
+      status-field:
+        required: false
+        type: string
+        default: Status
+      status-unclaimed:
+        required: false
+        type: string
+        default: Unclaimed
+      status-claimed:
+        required: false
+        type: string
+        default: Claimed
+      status-in-progress:
+        required: false
+        type: string
+        default: In Progress
+      terminal-statuses:
+        required: false
+        type: string
+        default: In Review,Completed
+      expiry-field:
+        required: false
+        type: string
+        default: Claim Expires
+      default-ttl:
+        required: false
+        type: string
+        default: 30d
+      max-ttl:
+        required: false
+        type: string
+        default: 90d
+      claim-bot-ref:
+        description: Version of leanprover-community/claim-bot to run.
+        required: false
+        type: string
+        default: v1
+    secrets:
+      project-token:
+        required: true
+
+jobs:
+  command:
+    # Only react to created comments; ignore the bot's own and other events.
+    if: github.event_name == 'issue_comment' && github.event.action == 'created'
+    runs-on: ubuntu-latest
+    # Serialize per issue so two near-simultaneous comments don't race.
+    concurrency:
+      group: claim-bot-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions: {}
+    steps:
+      - uses: leanprover-community/claim-bot@${{ inputs.claim-bot-ref }}
+        with:
+          mode: command
+          project-token: ${{ secrets.project-token }}
+          project-title: ${{ inputs.project-title }}
+          status-field: ${{ inputs.status-field }}
+          status-unclaimed: ${{ inputs.status-unclaimed }}
+          status-claimed: ${{ inputs.status-claimed }}
+          status-in-progress: ${{ inputs.status-in-progress }}
+          terminal-statuses: ${{ inputs.terminal-statuses }}
+          expiry-field: ${{ inputs.expiry-field }}
+          default-ttl: ${{ inputs.default-ttl }}
+          max-ttl: ${{ inputs.max-ttl }}
