@@ -55,8 +55,12 @@ on:
 
 jobs:
   command:
-    # Only react to created comments; ignore the bot's own and other events.
-    if: github.event_name == 'issue_comment' && github.event.action == 'created'
+    # React only to freshly-created issue comments, and skip comments made by this bot's own
+    # App so the bot's reply doesn't re-trigger a no-op run. (Comments from other apps/accounts —
+    # e.g. worker bots — still run; the `app-id == ''` branch keeps PAT-mode working.)
+    if: >-
+      github.event_name == 'issue_comment' && github.event.action == 'created' &&
+      (inputs.app-id == '' || github.event.comment.performed_via_github_app.id != fromJSON(inputs.app-id))
     runs-on: ubuntu-latest
     # Serialize per issue so two near-simultaneous comments don't race.
     concurrency:
