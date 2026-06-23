@@ -32,7 +32,7 @@ function sameSet(a: string[], b: string[]): boolean {
  * is only expired if its status, expiry, and assignees are unchanged since enumeration and
  * still due at the moment of mutation.
  */
-export async function runSweep(octokit: Octokit, cfg: Config, ctx: ProjectContext): Promise<void> {
+export async function runSweep(octokit: Octokit, repoOctokit: Octokit, cfg: Config, ctx: ProjectContext): Promise<void> {
   if (!expiryEnabled(cfg)) {
     core.info('Expiry is disabled for this project (default-ttl: none); sweep is a no-op.')
     return
@@ -60,7 +60,7 @@ export async function runSweep(octokit: Octokit, cfg: Config, ctx: ProjectContex
   let backfilled = 0
   for (const c of candidates) {
     try {
-      await processCandidate(octokit, cfg, ctx, c, now, () => { expired++ }, () => { backfilled++ })
+      await processCandidate(octokit, repoOctokit, cfg, ctx, c, now, () => { expired++ }, () => { backfilled++ })
     } catch (err) {
       core.warning(`Item for issue #${c.issueNumber}: ${(err as Error).message}`)
     }
@@ -70,6 +70,7 @@ export async function runSweep(octokit: Octokit, cfg: Config, ctx: ProjectContex
 
 async function processCandidate(
   octokit: Octokit,
+  repoOctokit: Octokit,
   cfg: Config,
   ctx: ProjectContext,
   c: ClaimedItem,
@@ -90,7 +91,7 @@ async function processCandidate(
       const fresh = await getIssueItem(octokit, owner, repo, c.issueNumber, ctx)
       if (!fresh || fresh.itemId !== c.itemId) return
       if (fresh.statusOptionId !== c.statusOptionId || fresh.expiryText) return
-      const assignees = await getAssignees(octokit, owner, repo, c.issueNumber)
+      const assignees = await getAssignees(repoOctokit, owner, repo, c.issueNumber)
       if (!sameSet(assignees, c.assignees)) return
       const expiry = new Date(now.getTime() + (cfg.defaultTtl.disabled ? 30 * MS_PER_DAY : cfg.defaultTtl.ms))
       await setExpiry(octokit, ctx, c.itemId, toStorage(expiry))
@@ -113,7 +114,7 @@ async function processCandidate(
   if (!fresh || fresh.itemId !== c.itemId) return
   if (fresh.statusOptionId !== c.statusOptionId) return // status changed since enumeration
   if (fresh.expiryText !== c.expiryText) return // renewed/cleared since enumeration
-  const assignees = await getAssignees(octokit, owner, repo, c.issueNumber)
+  const assignees = await getAssignees(repoOctokit, owner, repo, c.issueNumber)
   if (!sameSet(assignees, c.assignees)) return // assignees changed since enumeration
 
   // Re-confirm due (a non-legacy candidate must still be past-due).
@@ -128,10 +129,10 @@ async function processCandidate(
   await setStatus(octokit, ctx, c.itemId, unclaimedId)
   await clearExpiry(octokit, ctx, c.itemId)
   for (const login of assignees) {
-    await unassign(octokit, owner, repo, c.issueNumber, login)
+    await unassign(repoOctokit, owner, repo, c.issueNumber, login)
   }
   const wasDue = c.expiryText ? formatExpiry(new Date(c.expiryText)) : 'now (legacy claim, backfill=expire)'
-  await comment(octokit, owner, repo, c.issueNumber,
+  await comment(repoOctokit, owner, repo, c.issueNumber,
     `:hourglass: This claim expired (was due **${wasDue}**) and has been released back to **${cfg.statusUnclaimed}**. Comment \`claim\` to pick it up again.`)
   onExpire()
   core.info(`#${c.issueNumber}: expired and released.`)

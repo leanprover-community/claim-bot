@@ -42,3 +42,17 @@ test('auto-add defaults true and is overridable', () => {
   setInputs({ ...required, 'auto-add': 'false' })
   assert.equal(readConfig().autoAdd, false)
 })
+
+test('repo-token falls back to the project token when unset', () => {
+  setInputs(required)
+  const cfg = readConfig()
+  assert.equal(cfg.token, 't')
+  assert.equal(cfg.repoToken, 't')
+})
+
+test('repo-token overrides the project token for repo ops when set', () => {
+  setInputs({ ...required, 'repo-token': 'gh' })
+  const cfg = readConfig()
+  assert.equal(cfg.token, 't')
+  assert.equal(cfg.repoToken, 'gh')
+})

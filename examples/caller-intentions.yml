@@ -20,6 +20,11 @@ on:
 
 jobs:
   intentions:
+    # Lets the reusable workflow assign issues and edit PRs with this repo's GITHUB_TOKEN, so the
+    # project-token only needs Projects access. Required: permissions are min(caller, called).
+    permissions:
+      issues: write
+      pull-requests: write
     uses: leanprover-community/intentions/.github/workflows/intentions.yml@v1
     with:
       project-title: "My Project"   # the exact title of your Projects v2 board

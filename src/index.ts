@@ -14,6 +14,9 @@ import { runLifecycle } from './lifecycle.js'
 async function main(): Promise<void> {
   const cfg = readConfig()
   const octokit = getOctokit(cfg.token)
+  // Separate client for Issue/PR REST + repo-level GraphQL reads, so those run on repo-token
+  // (the workflow GITHUB_TOKEN) rather than the Projects PAT. Same client when repo-token is unset.
+  const repoOctokit = getOctokit(cfg.repoToken)
   const { owner, repo } = context.repo
 
   // Resolve the board + fields. This is also our read-side permission probe: if the token
@@ -39,12 +42,12 @@ async function main(): Promise<void> {
   }
 
   if (cfg.mode === 'sweep') {
-    await runSweep(octokit, cfg, ctx)
+    await runSweep(octokit, repoOctokit, cfg, ctx)
     return
   }
 
   if (cfg.mode === 'lifecycle') {
-    await runLifecycle(octokit, cfg, ctx)
+    await runLifecycle(octokit, repoOctokit, cfg, ctx)
     return
   }
 
@@ -68,6 +71,7 @@ async function main(): Promise<void> {
 
   const deps: Deps = {
     octokit,
+    repoOctokit,
     cfg,
     ctx,
     owner,

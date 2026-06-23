@@ -28,11 +28,11 @@ type Octokit = ReturnType<typeof getOctokit>
  *
  * Every transition is guarded on the item's current status so manual board edits aren't stomped.
  */
-export async function runLifecycle(octokit: Octokit, cfg: Config, ctx: ProjectContext): Promise<void> {
+export async function runLifecycle(octokit: Octokit, repoOctokit: Octokit, cfg: Config, ctx: ProjectContext): Promise<void> {
   const event = context.eventName
   const action = (context.payload.action as string | undefined) ?? ''
   if (event === 'issues') return runIssueEvent(octokit, cfg, ctx, action)
-  if (event === 'pull_request' || event === 'pull_request_target') return runPullEvent(octokit, cfg, ctx, action)
+  if (event === 'pull_request' || event === 'pull_request_target') return runPullEvent(octokit, repoOctokit, cfg, ctx, action)
   core.info(`Lifecycle: no handler for event ${JSON.stringify(event)}; nothing to do.`)
 }
 
@@ -87,7 +87,7 @@ async function runIssueEvent(octokit: Octokit, cfg: Config, ctx: ProjectContext,
   }
 }
 
-async function runPullEvent(octokit: Octokit, cfg: Config, ctx: ProjectContext, action: string): Promise<void> {
+async function runPullEvent(octokit: Octokit, repoOctokit: Octokit, cfg: Config, ctx: ProjectContext, action: string): Promise<void> {
   const pr = context.payload.pull_request as
     | { number?: number; draft?: boolean; merged?: boolean; state?: string; user?: { login?: string } }
     | undefined
@@ -98,7 +98,7 @@ async function runPullEvent(octokit: Octokit, cfg: Config, ctx: ProjectContext, 
   const { owner, repo } = context.repo
   const author = pr.user?.login ?? ''
 
-  const issues = await getClosingIssueNumbers(octokit, owner, repo, pr.number)
+  const issues = await getClosingIssueNumbers(repoOctokit, owner, repo, pr.number)
   if (issues.length === 0) {
     core.info(`PR #${pr.number}: no "Closes #N" reference to an issue in ${owner}/${repo}; nothing to do.`)
     return
@@ -108,7 +108,7 @@ async function runPullEvent(octokit: Octokit, cfg: Config, ctx: ProjectContext, 
   const closed = pr.state === 'closed' || action === 'closed'
   for (const num of issues) {
     try {
-      await applyPullToIssue(octokit, cfg, ctx, owner, repo, num, pr.number, { merged, closed, draft: pr.draft === true, author })
+      await applyPullToIssue(octokit, repoOctokit, cfg, ctx, owner, repo, num, pr.number, { merged, closed, draft: pr.draft === true, author })
     } catch (err) {
       core.warning(`PR #${pr.number} -> issue #${num}: ${(err as Error).message}`)
     }
@@ -124,6 +124,7 @@ interface PullFacts {
 
 async function applyPullToIssue(
   octokit: Octokit,
+  repoOctokit: Octokit,
   cfg: Config,
   ctx: ProjectContext,
   owner: string,
@@ -150,19 +151,19 @@ async function applyPullToIssue(
       }
       if (item.statusOptionId === completed) return
       await setStatus(octokit, ctx, item.itemId, completed)
-      await comment(octokit, owner, repo, num, `:tada: PR #${prNumber} merged; task moved to **${cfg.statusCompleted}**.`)
+      await comment(repoOctokit, owner, repo, num, `:tada: PR #${prNumber} merged; task moved to **${cfg.statusCompleted}**.`)
       return
     }
     // Closed without merging: drop an active item back to Claimed, keeping the claim intact —
     // but only if no other open PR still references the issue (don't regress live review work).
     if (claimed && (item.statusOptionId === inProgress || item.statusOptionId === inReview)) {
-      const others = (await getOpenClosingPullNumbers(octokit, owner, repo, num)).filter((n) => n !== prNumber)
+      const others = (await getOpenClosingPullNumbers(repoOctokit, owner, repo, num)).filter((n) => n !== prNumber)
       if (others.length > 0) {
         core.info(`#${num}: PR #${prNumber} closed unmerged, but PR(s) ${others.join(', ')} still open; leaving status.`)
         return
       }
       if (await casSetStatus(octokit, ctx, owner, repo, num, item, claimed)) {
-        await comment(octokit, owner, repo, num, `PR #${prNumber} was closed without merging; task is back to **${cfg.statusClaimed}** (still yours).`)
+        await comment(repoOctokit, owner, repo, num, `PR #${prNumber} was closed without merging; task is back to **${cfg.statusClaimed}** (still yours).`)
       }
     }
     return
@@ -176,9 +177,9 @@ async function applyPullToIssue(
   // claimed by someone else. This matters because `pull_request_target` runs with the write
   // token on PRs from forks, where the author is untrusted.
   const available = item.statusOptionId === null || item.statusOptionId === unclaimed
-  const assignees = await getAssignees(octokit, owner, repo, num)
+  const assignees = await getAssignees(repoOctokit, owner, repo, num)
   if (available && assignees.length === 0) {
-    if (pr.author) await assign(octokit, owner, repo, num, pr.author) // auto-claim for the PR author
+    if (pr.author) await assign(repoOctokit, owner, repo, num, pr.author) // auto-claim for the PR author
   } else if (!pr.author || !assignees.includes(pr.author)) {
     core.info(`#${num}: held by someone other than ${pr.author || '(unknown author)'}; lifecycle leaves it alone.`)
     return
@@ -198,7 +199,7 @@ async function applyPullToIssue(
   }
   if (item.statusOptionId === target) return // already there; stay quiet (idempotent on re-fires)
   if (await casSetStatus(octokit, ctx, owner, repo, num, item, target)) {
-    await comment(octokit, owner, repo, num, `PR #${prNumber} linked; task moved to **${targetName}**.`)
+    await comment(repoOctokit, owner, repo, num, `PR #${prNumber} linked; task moved to **${targetName}**.`)
   }
 }
 

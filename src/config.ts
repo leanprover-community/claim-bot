@@ -7,6 +7,7 @@ export type BackfillMode = 'grace' | 'ignore' | 'expire'
 export interface Config {
   mode: Mode
   token: string
+  repoToken: string
   projectTitle: string
   statusField: string
   statusUnclaimed: string
@@ -42,9 +43,15 @@ export function readConfig(): Config {
   const defaultTtl = parseTtlSetting(core.getInput('default-ttl') || '30d')
   const maxTtl = parseTtlSetting(core.getInput('max-ttl') || '90d')
 
+  // The project token writes Projects v2 (the default GITHUB_TOKEN can't). Issue/PR REST ops use
+  // repo-token, which the reusable workflow sets to the job GITHUB_TOKEN; fall back to the project
+  // token when repo-token is unset, so a GitHub-App installation token still drives everything.
+  const token = core.getInput('project-token', { required: true })
+
   return {
     mode: parseMode(core.getInput('mode', { required: true })),
-    token: core.getInput('project-token', { required: true }),
+    token,
+    repoToken: core.getInput('repo-token') || token,
     projectTitle: core.getInput('project-title', { required: true }),
     statusField: core.getInput('status-field') || 'Status',
     statusUnclaimed: core.getInput('status-unclaimed') || 'Unclaimed',
