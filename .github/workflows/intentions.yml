@@ -1,7 +1,7 @@
-name: claim-bot
+name: Intentions
 
-# Reusable workflow handling every claim-bot trigger. Adopters call this from a single thin
-# caller that lists the events they want (see examples/caller-claim-bot.yml). The job that runs
+# Reusable workflow handling every intentions trigger. Adopters call this from a single thin
+# caller that lists the events they want (see examples/caller-intentions.yml). The job that runs
 # is selected by the triggering event:
 #   issue_comment                 -> command  (claim / disclaim / propose / withdraw)
 #   issues, pull_request_target   -> lifecycle (auto-add, PR-driven status, completion)
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     # Serialize per issue so two near-simultaneous comments don't race.
     concurrency:
-      group: claim-bot-issue-${{ github.event.issue.number }}
+      group: intentions-issue-${{ github.event.issue.number }}
       cancel-in-progress: false
     permissions: {}
     steps:
@@ -99,7 +99,7 @@ jobs:
           private-key: ${{ secrets.app-private-key }}
           owner: ${{ github.repository_owner }}
       # Pinned to the major tag; this reusable workflow and the action are released together.
-      - uses: leanprover-community/claim-bot@v1
+      - uses: leanprover-community/intentions@v1
         with:
           mode: command
           project-token: ${{ steps.app-token.outputs.token || secrets.project-token }}
@@ -121,7 +121,7 @@ jobs:
     # can still overlap a `claim` comment on the linked issue — the action guards that with a
     # compare-and-swap (re-read status before mutating), the same way the sweep does.
     concurrency:
-      group: claim-bot-item-${{ github.event.issue.number || github.event.pull_request.number }}
+      group: intentions-item-${{ github.event.issue.number || github.event.pull_request.number }}
       cancel-in-progress: false
     permissions: {}
     steps:
@@ -132,7 +132,7 @@ jobs:
           app-id: ${{ inputs.app-id }}
           private-key: ${{ secrets.app-private-key }}
           owner: ${{ github.repository_owner }}
-      - uses: leanprover-community/claim-bot@v1
+      - uses: leanprover-community/intentions@v1
         with:
           mode: lifecycle
           project-token: ${{ steps.app-token.outputs.token || secrets.project-token }}
@@ -153,7 +153,7 @@ jobs:
     runs-on: ubuntu-latest
     # One sweep at a time across the whole project.
     concurrency:
-      group: claim-bot-sweep
+      group: intentions-sweep
       cancel-in-progress: false
     permissions: {}
     steps:
@@ -164,7 +164,7 @@ jobs:
           app-id: ${{ inputs.app-id }}
           private-key: ${{ secrets.app-private-key }}
           owner: ${{ github.repository_owner }}
-      - uses: leanprover-community/claim-bot@v1
+      - uses: leanprover-community/intentions@v1
         with:
           mode: sweep
           project-token: ${{ steps.app-token.outputs.token || secrets.project-token }}

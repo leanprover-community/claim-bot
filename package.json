@@ -1,5 +1,5 @@
 {
-  "name": "claim-bot",
+  "name": "intentions",
   "version": "1.0.0",
   "private": true,
   "description": "Coordinate who works on what in a Lean (or any) project: claim/disclaim tasks via GitHub issue comments, with configurable claim expiry (TTL).",

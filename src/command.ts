@@ -1,5 +1,5 @@
 /**
- * Parse a single issue comment into a claim-bot command, or null if it isn't one.
+ * Parse a single issue comment into an intentions command, or null if it isn't one.
  *
  * Matching is deliberately strict (the whole comment must be the command, modulo
  * whitespace/case) so that prose like "I'll claim this later" does not trigger the bot.

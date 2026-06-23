@@ -31890,7 +31890,7 @@ function boolInput(name, dflt) {
 
 ;// CONCATENATED MODULE: ./src/command.ts
 /**
- * Parse a single issue comment into a claim-bot command, or null if it isn't one.
+ * Parse a single issue comment into an intentions command, or null if it isn't one.
  *
  * Matching is deliberately strict (the whole comment must be the command, modulo
  * whitespace/case) so that prose like "I'll claim this later" does not trigger the bot.
@@ -32187,7 +32187,7 @@ async function getPull(octokit, owner, repo, pull_number) {
     }
 }
 // A hidden, issue-specific marker so we only ever touch our own line, never user prose.
-const closesMarker = (issueNumber) => `<!-- claim-bot:closes #${issueNumber} -->`;
+const closesMarker = (issueNumber) => `<!-- intentions:closes #${issueNumber} -->`;
 /** Append a "Closes #N" line (with our marker) to a PR body if not already present. */
 async function linkPullToIssue(octokit, owner, repo, pull_number, issueNumber, body) {
     const marker = closesMarker(issueNumber);
@@ -32789,7 +32789,7 @@ async function main() {
     }
     const command = parseCommand(comment.body);
     if (!command) {
-        core.info('Comment is not a claim-bot command; ignoring.');
+        core.info('Comment is not an intentions command; ignoring.');
         return;
     }
     const deps = {

@@ -88,7 +88,7 @@ export async function getPull(octokit: Octokit, owner: string, repo: string, pul
 }
 
 // A hidden, issue-specific marker so we only ever touch our own line, never user prose.
-const closesMarker = (issueNumber: number): string => `<!-- claim-bot:closes #${issueNumber} -->`
+const closesMarker = (issueNumber: number): string => `<!-- intentions:closes #${issueNumber} -->`
 
 /** Append a "Closes #N" line (with our marker) to a PR body if not already present. */
 export async function linkPullToIssue(octokit: Octokit, owner: string, repo: string, pull_number: number, issueNumber: number, body: string): Promise<void> {

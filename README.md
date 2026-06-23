@@ -1,4 +1,4 @@
-# claim-bot
+# intentions
 
 Coordinate who works on what. Contributors **claim** tasks by commenting on GitHub issues;
 the bot assigns them and moves a card on a Projects v2 board. Claims can carry a
@@ -76,20 +76,20 @@ a clean `…[bot]` identity, or **B** if you just want something quick.
 
 #### A. GitHub App (recommended)
 
-1. **One click:** open **<https://leanprover-community.github.io/claim-bot/create-app.html>**,
+1. **One click:** open **<https://leanprover-community.github.io/intentions/create-app.html>**,
    enter your org, and create the App — permissions and webhook-off are pre-filled for you.
 2. On the new App: **generate a private key** (`.pem`), note the **App ID**, and **install**
    it on the repo with your issues.
 3. In that repo → Settings → Secrets and variables → Actions, add:
-   - variable **`CLAIM_BOT_APP_ID`** = the App ID,
-   - secret **`CLAIM_BOT_APP_PRIVATE_KEY`** = the `.pem` contents.
+   - variable **`INTENTIONS_BOT_APP_ID`** = the App ID,
+   - secret **`INTENTIONS_BOT_APP_PRIVATE_KEY`** = the `.pem` contents.
 
 #### B. Fine-grained PAT
 
 Create a fine-grained PAT with **Issues: R/W**, **Pull requests: R/W**, and **Projects: R/W**
 (for an org-owned board the Projects permission is under *Organization permissions*, and the
-token's resource owner must be that org). Add it as secret **`CLAIM_BOT_TOKEN`**, and in the
-workflows below pass `project-token: ${{ secrets.CLAIM_BOT_TOKEN }}` instead of the `app-id` /
+token's resource owner must be that org). Add it as secret **`INTENTIONS_BOT_TOKEN`**, and in the
+workflows below pass `project-token: ${{ secrets.INTENTIONS_BOT_TOKEN }}` instead of the `app-id` /
 `app-private-key` lines.
 
 <details><summary>Setting up the App by hand instead of the one-click form</summary>
@@ -104,11 +104,11 @@ See [examples/board-setup.md](examples/board-setup.md) for full details.
 
 ### 3. Add the workflow
 
-Create a single `.github/workflows/claim-bot.yml` (full copy in
-[examples/caller-claim-bot.yml](examples/caller-claim-bot.yml)):
+Create a single `.github/workflows/intentions.yml` (full copy in
+[examples/caller-intentions.yml](examples/caller-intentions.yml)):
 
 ```yaml
-name: Claim bot
+name: Intentions
 on:
   issue_comment:
     types: [created]
@@ -120,15 +120,15 @@ on:
     - cron: "17 */6 * * *"   # the sweep; tighter (e.g. "*/15 * * * *") if you use short TTLs
   workflow_dispatch: {}
 jobs:
-  claim-bot:
-    uses: leanprover-community/claim-bot/.github/workflows/claim-bot.yml@v1
+  intentions:
+    uses: leanprover-community/intentions/.github/workflows/intentions.yml@v1
     with:
       project-title: "My Project"   # exact title of your Projects v2 board
       default-ttl: "30d"            # use "none" to disable expiry entirely
       max-ttl: "90d"
-      app-id: ${{ vars.CLAIM_BOT_APP_ID }}
+      app-id: ${{ vars.INTENTIONS_BOT_APP_ID }}
     secrets:
-      app-private-key: ${{ secrets.CLAIM_BOT_APP_PRIVATE_KEY }}
+      app-private-key: ${{ secrets.INTENTIONS_BOT_APP_PRIVATE_KEY }}
 ```
 
 One workflow handles comments, the issue/PR lifecycle, and the sweep — the reusable workflow

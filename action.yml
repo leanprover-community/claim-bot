@@ -1,4 +1,4 @@
-name: 'Claim bot'
+name: 'Intentions'
 description: 'Coordinate who works on what: claim/disclaim tasks via issue comments, with configurable claim expiry (TTL).'
 author: 'leanprover-community'
 

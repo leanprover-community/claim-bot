@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Create a claim-bot GitHub App</title>
+<title>Create an intentions GitHub App</title>
 <style>
   body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; color: #1f2328; }
   h1 { font-size: 1.4rem; }
@@ -16,8 +16,8 @@
 </style>
 </head>
 <body>
-<h1>Create a claim-bot GitHub App</h1>
-<p>This pre-fills a GitHub App with exactly the permissions claim-bot needs
+<h1>Create an intentions GitHub App</h1>
+<p>This pre-fills a GitHub App with exactly the permissions intentions needs
 (Issues + Pull requests read/write, organization Projects read/write, no webhook).
 Enter the account that owns the board and the repo, then click create.</p>
 
@@ -41,15 +41,15 @@ the suggested name if it's taken.</p>
   <li>Note the <strong>App ID</strong>.</li>
   <li><strong>Install App</strong> on the repository that holds your issues.</li>
   <li>In that repo → Settings → Secrets and variables → Actions: add variable
-      <code>CLAIM_BOT_APP_ID</code> and secret <code>CLAIM_BOT_APP_PRIVATE_KEY</code>.</li>
+      <code>INTENTIONS_BOT_APP_ID</code> and secret <code>INTENTIONS_BOT_APP_PRIVATE_KEY</code>.</li>
 </ol>
-<p class="muted"><a href="https://github.com/leanprover-community/claim-bot#readme">← back to the claim-bot README</a></p>
+<p class="muted"><a href="https://github.com/leanprover-community/intentions#readme">← back to the intentions README</a></p>
 
 <script>
   function manifest(org) {
     return {
-      name: org ? (org + " claim-bot") : "claim-bot",
-      url: "https://github.com/leanprover-community/claim-bot",
+      name: org ? (org + " intentions") : "intentions",
+      url: "https://github.com/leanprover-community/intentions",
       hook_attributes: { active: false },
       public: false,
       default_events: [],
@@ -65,8 +65,8 @@ the suggested name if it's taken.</p>
     const org = document.getElementById('org').value.trim()
     document.getElementById('manifest').value = JSON.stringify(manifest(org))
     form.action = org
-      ? "https://github.com/organizations/" + encodeURIComponent(org) + "/settings/apps/new?state=claim-bot"
-      : "https://github.com/settings/apps/new?state=claim-bot"
+      ? "https://github.com/organizations/" + encodeURIComponent(org) + "/settings/apps/new?state=intentions"
+      : "https://github.com/settings/apps/new?state=intentions"
   })
 </script>
 </body>
