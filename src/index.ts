@@ -62,7 +62,7 @@ async function main(): Promise<void> {
 
   const command = parseCommand(comment.body)
   if (!command) {
-    core.info('Comment is not a claim-bot command; ignoring.')
+    core.info('Comment is not an intentions command; ignoring.')
     return
   }
 

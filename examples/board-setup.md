@@ -1,6 +1,6 @@
 # One-time board setup
 
-The claim-bot drives a **GitHub Projects v2** board. You need two fields on it.
+Intentions drives a **GitHub Projects v2** board. You need two fields on it.
 
 ## 1. Status (single-select)
 
@@ -47,8 +47,8 @@ The bot acts under its own `…[bot]` identity, the token is short-lived (minted
 3. Create the App, **Install** it on the repository that holds your issues, and **generate a
    private key** (downloads a `.pem`).
 4. In that repository (Settings → Secrets and variables → Actions):
-   - add a **variable** `CLAIM_BOT_APP_ID` = the App's numeric ID;
-   - add a **secret** `CLAIM_BOT_APP_PRIVATE_KEY` = the full contents of the `.pem`.
+   - add a **variable** `INTENTIONS_BOT_APP_ID` = the App's numeric ID;
+   - add a **secret** `INTENTIONS_BOT_APP_PRIVATE_KEY` = the full contents of the `.pem`.
 
 The caller workflows pass `app-id` + `app-private-key`; the bot mints an org-scoped
 installation token at runtime.
@@ -58,5 +58,5 @@ installation token at runtime.
 A fine-grained PAT with `Issues: Read and write`, `Pull requests: Read and write`, and
 `Projects: Read and write`. For an **org-owned** board the Projects permission must be set
 under **Organization permissions** (and the token's resource owner must be that org); for an
-org with SAML SSO the token must be SAML-authorized. Store it as a secret `CLAIM_BOT_TOKEN`
+org with SAML SSO the token must be SAML-authorized. Store it as a secret `INTENTIONS_BOT_TOKEN`
 and pass it to the workflows via `project-token:` instead of the App inputs.
