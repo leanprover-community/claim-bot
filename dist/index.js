@@ -31846,9 +31846,9 @@ function expiryEnabled(cfg) {
     return !cfg.defaultTtl.disabled;
 }
 function parseMode(raw) {
-    if (raw === 'command' || raw === 'sweep')
+    if (raw === 'command' || raw === 'sweep' || raw === 'lifecycle')
         return raw;
-    throw new Error(`Invalid mode ${JSON.stringify(raw)}; expected "command" or "sweep".`);
+    throw new Error(`Invalid mode ${JSON.stringify(raw)}; expected "command", "sweep", or "lifecycle".`);
 }
 function parseBackfill(raw) {
     if (raw === 'grace' || raw === 'ignore' || raw === 'expire')
@@ -31866,6 +31866,8 @@ function readConfig() {
         statusUnclaimed: core.getInput('status-unclaimed') || 'Unclaimed',
         statusClaimed: core.getInput('status-claimed') || 'Claimed',
         statusInProgress: core.getInput('status-in-progress') || 'In Progress',
+        statusInReview: core.getInput('status-in-review') || 'In Review',
+        statusCompleted: core.getInput('status-completed') || 'Completed',
         terminalStatuses: (core.getInput('terminal-statuses') || 'In Review,Completed')
             .split(',')
             .map((s) => s.trim())
@@ -31875,7 +31877,15 @@ function readConfig() {
         maxTtlMs: maxTtl.disabled ? null : maxTtl.ms,
         expireInProgress: core.getBooleanInput('expire-in-progress'),
         backfillLegacy: parseBackfill(core.getInput('backfill-legacy') || 'grace'),
+        autoAdd: boolInput('auto-add', true),
     };
+}
+/** Boolean input with a default when unset (core.getBooleanInput throws on empty). */
+function boolInput(name, dflt) {
+    const raw = core.getInput(name);
+    if (!raw)
+        return dflt;
+    return core.getBooleanInput(name);
 }
 
 ;// CONCATENATED MODULE: ./src/command.ts
@@ -32084,6 +32094,14 @@ async function listItemsByStatus(octokit, ctx, statusOptionIds) {
     } while (cursor);
     return out;
 }
+/** Add an issue (by its content node id) to the board; returns the item id. The API is
+ *  idempotent: adding content already on the board returns its existing item unchanged. */
+async function addIssueToProject(octokit, ctx, contentId) {
+    const res = await octokit.graphql(`mutation($p:ID!,$c:ID!){
+      addProjectV2ItemById(input:{projectId:$p,contentId:$c}){ item{ id } }
+    }`, { p: ctx.projectId, c: contentId });
+    return res.addProjectV2ItemById.item.id;
+}
 async function setStatus(octokit, ctx, itemId, optionId) {
     await octokit.graphql(`mutation($p:ID!,$i:ID!,$f:ID!,$o:String!){
       updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:{singleSelectOptionId:$o}}){ projectV2Item{ id } }
@@ -32108,6 +32126,24 @@ async function clearExpiry(octokit, ctx, itemId) {
 async function getAssignees(octokit, owner, repo, issue_number) {
     const res = await octokit.rest.issues.get({ owner, repo, issue_number });
     return (res.data.assignees ?? []).map((a) => a.login);
+}
+/**
+ * The issues a PR closes via GitHub's parsed linkage (`Closes #N` / `Fixes #N` and the
+ * "Development" sidebar), restricted to issues in this same repo (the board's tasks).
+ * This is the source of truth for auto-linking — we read it rather than re-parsing prose.
+ */
+async function getClosingIssueNumbers(octokit, owner, repo, pull_number) {
+    const res = await octokit.graphql(`query($owner:String!,$repo:String!,$num:Int!){
+      repository(owner:$owner,name:$repo){
+        pullRequest(number:$num){
+          closingIssuesReferences(first:20){ nodes{ number repository{ name owner{ login } } } }
+        }
+      }
+    }`, { owner, repo, num: pull_number });
+    const nodes = res.repository?.pullRequest?.closingIssuesReferences?.nodes ?? [];
+    return nodes
+        .filter((n) => n.repository.owner.login.toLowerCase() === owner.toLowerCase() && n.repository.name.toLowerCase() === repo.toLowerCase())
+        .map((n) => n.number);
 }
 async function issues_assign(octokit, owner, repo, issue_number, login) {
     await octokit.rest.issues.addAssignees({ owner, repo, issue_number, assignees: [login] });
@@ -32489,7 +32525,171 @@ async function processCandidate(octokit, cfg, ctx, c, now, onExpire, onBackfill)
     core.info(`#${c.issueNumber}: expired and released.`);
 }
 
+;// CONCATENATED MODULE: ./src/lifecycle.ts
+
+
+
+
+
+
+
+/**
+ * Board lifecycle automation: keep the board in sync with issue and PR events, so a project
+ * gets the full ETP column flow without configuring GitHub's native Project workflows by hand.
+ *
+ *  - issue opened   -> add to board as Unclaimed (auto-add)
+ *  - issue closed   -> Completed
+ *  - issue reopened -> Unclaimed (only if it was Completed)
+ *  - PR opened/ready -> for each `Closes #N`: claim for the author if Unclaimed, then move to
+ *                       In Review (or In Progress while draft) and refresh the expiry
+ *  - PR merged      -> Completed
+ *  - PR closed unmerged -> back to Claimed (the claim is kept)
+ *
+ * Every transition is guarded on the item's current status so manual board edits aren't stomped.
+ */
+async function runLifecycle(octokit, cfg, ctx) {
+    const event = github.context.eventName;
+    const action = github.context.payload.action ?? '';
+    if (event === 'issues')
+        return runIssueEvent(octokit, cfg, ctx, action);
+    if (event === 'pull_request' || event === 'pull_request_target')
+        return runPullEvent(octokit, cfg, ctx, action);
+    core.info(`Lifecycle: no handler for event ${JSON.stringify(event)}; nothing to do.`);
+}
+async function runIssueEvent(octokit, cfg, ctx, action) {
+    const issue = github.context.payload.issue;
+    if (!issue?.number || issue.pull_request) {
+        core.info('Not an issue payload (or it is a PR); nothing to do.');
+        return;
+    }
+    const { owner, repo } = github.context.repo;
+    const num = issue.number;
+    if (action === 'opened') {
+        if (!cfg.autoAdd)
+            return;
+        const existing = await getIssueItem(octokit, owner, repo, num, ctx);
+        if (existing)
+            return; // already on the board; leave its status alone
+        if (!issue.node_id) {
+            core.warning(`#${num}: opened event has no node_id; cannot add to board.`);
+            return;
+        }
+        const itemId = await addIssueToProject(octokit, ctx, issue.node_id);
+        const unclaimed = optionId(ctx, cfg.statusUnclaimed);
+        if (unclaimed)
+            await setStatus(octokit, ctx, itemId, unclaimed);
+        core.info(`#${num}: added to board as ${cfg.statusUnclaimed}.`);
+        return;
+    }
+    if (action === 'closed') {
+        const item = await getIssueItem(octokit, owner, repo, num, ctx);
+        if (!item)
+            return;
+        const completed = optionId(ctx, cfg.statusCompleted);
+        if (!completed) {
+            core.warning(`No "${cfg.statusCompleted}" status option; cannot mark #${num} completed.`);
+            return;
+        }
+        if (item.statusOptionId === completed)
+            return;
+        await setStatus(octokit, ctx, item.itemId, completed);
+        core.info(`#${num}: closed -> ${cfg.statusCompleted}.`);
+        return;
+    }
+    if (action === 'reopened') {
+        const item = await getIssueItem(octokit, owner, repo, num, ctx);
+        if (!item)
+            return;
+        const completed = optionId(ctx, cfg.statusCompleted);
+        const unclaimed = optionId(ctx, cfg.statusUnclaimed);
+        // Only revert a Completed item; never disturb an active claim that was reopened.
+        if (completed && unclaimed && item.statusOptionId === completed) {
+            await setStatus(octokit, ctx, item.itemId, unclaimed);
+            core.info(`#${num}: reopened -> ${cfg.statusUnclaimed}.`);
+        }
+    }
+}
+async function runPullEvent(octokit, cfg, ctx, action) {
+    const pr = github.context.payload.pull_request;
+    if (!pr?.number) {
+        core.info('No pull_request payload; nothing to do.');
+        return;
+    }
+    const { owner, repo } = github.context.repo;
+    const author = pr.user?.login ?? '';
+    const issues = await getClosingIssueNumbers(octokit, owner, repo, pr.number);
+    if (issues.length === 0) {
+        core.info(`PR #${pr.number}: no "Closes #N" reference to an issue in ${owner}/${repo}; nothing to do.`);
+        return;
+    }
+    const merged = pr.merged === true;
+    const closed = pr.state === 'closed' || action === 'closed';
+    for (const num of issues) {
+        try {
+            await applyPullToIssue(octokit, cfg, ctx, owner, repo, num, pr.number, { merged, closed, draft: pr.draft === true, author });
+        }
+        catch (err) {
+            core.warning(`PR #${pr.number} -> issue #${num}: ${err.message}`);
+        }
+    }
+}
+async function applyPullToIssue(octokit, cfg, ctx, owner, repo, num, prNumber, pr) {
+    const item = await getIssueItem(octokit, owner, repo, num, ctx);
+    if (!item)
+        return; // issue isn't on the board
+    const unclaimed = optionId(ctx, cfg.statusUnclaimed);
+    const claimed = optionId(ctx, cfg.statusClaimed);
+    const inProgress = optionId(ctx, cfg.statusInProgress);
+    const inReview = optionId(ctx, cfg.statusInReview);
+    const completed = optionId(ctx, cfg.statusCompleted);
+    if (pr.closed) {
+        if (pr.merged) {
+            if (!completed) {
+                core.warning(`No "${cfg.statusCompleted}" status option; cannot complete #${num}.`);
+                return;
+            }
+            if (item.statusOptionId === completed)
+                return;
+            await setStatus(octokit, ctx, item.itemId, completed);
+            await comment(octokit, owner, repo, num, `:tada: PR #${prNumber} merged; task moved to **${cfg.statusCompleted}**.`);
+            return;
+        }
+        // Closed without merging: drop an active item back to Claimed, keeping the claim intact.
+        if (claimed && (item.statusOptionId === inProgress || item.statusOptionId === inReview)) {
+            await setStatus(octokit, ctx, item.itemId, claimed);
+            await comment(octokit, owner, repo, num, `PR #${prNumber} was closed without merging; task is back to **${cfg.statusClaimed}** (still yours).`);
+        }
+        return;
+    }
+    // PR is open (opened / reopened / ready_for_review / converted_to_draft).
+    if (completed && item.statusOptionId === completed)
+        return; // don't reactivate a done task
+    // Auto-claim an unclaimed (or board-only, status-less) issue for the PR author.
+    if (item.statusOptionId === null || item.statusOptionId === unclaimed) {
+        if (pr.author && (await getAssignees(octokit, owner, repo, num)).length === 0) {
+            await issues_assign(octokit, owner, repo, num, pr.author);
+        }
+    }
+    if (expiryEnabled(cfg)) {
+        const res = resolveExpiry('', new Date(), cfg.defaultTtl, cfg.maxTtlMs);
+        if (res.ok)
+            await setExpiry(octokit, ctx, item.itemId, toStorage(res.expiry));
+    }
+    // Draft PRs sit in In Progress; ready PRs move to In Review when the board has that column.
+    const target = pr.draft ? inProgress : (inReview ?? inProgress);
+    const targetName = pr.draft ? cfg.statusInProgress : (inReview ? cfg.statusInReview : cfg.statusInProgress);
+    if (!target) {
+        core.warning(`No "${cfg.statusInProgress}" status option to move #${num} into.`);
+        return;
+    }
+    if (item.statusOptionId === target)
+        return; // already there; stay quiet (idempotent on re-fires)
+    await setStatus(octokit, ctx, item.itemId, target);
+    await comment(octokit, owner, repo, num, `PR #${prNumber} linked; task moved to **${targetName}**.`);
+}
+
 ;// CONCATENATED MODULE: ./src/index.ts
+
 
 
 
@@ -32523,6 +32723,10 @@ async function main() {
     }
     if (cfg.mode === 'sweep') {
         await runSweep(octokit, cfg, ctx);
+        return;
+    }
+    if (cfg.mode === 'lifecycle') {
+        await runLifecycle(octokit, cfg, ctx);
         return;
     }
     // mode === 'command'
