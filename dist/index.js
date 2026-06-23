@@ -31858,9 +31858,14 @@ function parseBackfill(raw) {
 function readConfig() {
     const defaultTtl = parseTtlSetting(core.getInput('default-ttl') || '30d');
     const maxTtl = parseTtlSetting(core.getInput('max-ttl') || '90d');
+    // The project token writes Projects v2 (the default GITHUB_TOKEN can't). Issue/PR REST ops use
+    // repo-token, which the reusable workflow sets to the job GITHUB_TOKEN; fall back to the project
+    // token when repo-token is unset, so a GitHub-App installation token still drives everything.
+    const token = core.getInput('project-token', { required: true });
     return {
         mode: parseMode(core.getInput('mode', { required: true })),
-        token: core.getInput('project-token', { required: true }),
+        token,
+        repoToken: core.getInput('repo-token') || token,
         projectTitle: core.getInput('project-title', { required: true }),
         statusField: core.getInput('status-field') || 'Status',
         statusUnclaimed: core.getInput('status-unclaimed') || 'Unclaimed',
@@ -32238,14 +32243,14 @@ function isTerminal(cfg, statusName) {
  * set before assignment, so the sweep never sees a Claimed item with a missing expiry.
  */
 async function handleClaim(deps, expiryArg) {
-    const { octokit, cfg, ctx, owner, repo, issueNumber, actor } = deps;
+    const { octokit, repoOctokit, cfg, ctx, owner, repo, issueNumber, actor } = deps;
     const now = new Date();
     const item = await getIssueItem(octokit, owner, repo, issueNumber, ctx);
     if (!item) {
-        await comment(octokit, owner, repo, issueNumber, `@${actor} this issue isn't on the **${cfg.projectTitle}** board yet, so it can't be claimed. A maintainer needs to add it first.`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} this issue isn't on the **${cfg.projectTitle}** board yet, so it can't be claimed. A maintainer needs to add it first.`);
         return;
     }
-    const assignees = await getAssignees(octokit, owner, repo, issueNumber);
+    const assignees = await getAssignees(repoOctokit, owner, repo, issueNumber);
     const statusName = item.statusOptionId ? ctx.statusNameById.get(item.statusOptionId) ?? null : null;
     const claimedId = requireOption(ctx, cfg.statusClaimed);
     const unclaimedId = requireOption(ctx, cfg.statusUnclaimed);
@@ -32255,39 +32260,39 @@ async function handleClaim(deps, expiryArg) {
     // ---- Renew / extend path -------------------------------------------------
     if (actorHolds) {
         if (!expiryEnabled(cfg)) {
-            await comment(octokit, owner, repo, issueNumber, `@${actor} you already hold this claim. Expiry is disabled for this project, so there's nothing to renew.`);
+            await comment(repoOctokit, owner, repo, issueNumber, `@${actor} you already hold this claim. Expiry is disabled for this project, so there's nothing to renew.`);
             return;
         }
         const res = resolveExpiry(expiryArg, now, cfg.defaultTtl, cfg.maxTtlMs);
         if (!res.ok) {
-            await comment(octokit, owner, repo, issueNumber, `@${actor} ${res.reason}`);
+            await comment(repoOctokit, owner, repo, issueNumber, `@${actor} ${res.reason}`);
             return;
         }
         await setExpiry(octokit, ctx, item.itemId, toStorage(res.expiry));
-        await comment(octokit, owner, repo, issueNumber, `@${actor} claim renewed — now expires **${formatExpiry(res.expiry)}**.`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} claim renewed — now expires **${formatExpiry(res.expiry)}**.`);
         return;
     }
     // ---- Fresh claim path: enforce guardrails --------------------------------
     if (isTerminal(cfg, statusName)) {
-        await comment(octokit, owner, repo, issueNumber, `@${actor} this task is **${statusName}**, so there's nothing to claim.`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} this task is **${statusName}**, so there's nothing to claim.`);
         return;
     }
     if (item.statusOptionId !== unclaimedId || assignees.length > 0) {
         const who = assignees.length ? assignees.map((a) => `@${a}`).join(', ') : 'someone';
-        await comment(octokit, owner, repo, issueNumber, `@${actor} this task isn't available — it's currently **${statusName ?? 'not Unclaimed'}** (held by ${who}). It will free up if the claim is disclaimed or expires.`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} this task isn't available — it's currently **${statusName ?? 'not Unclaimed'}** (held by ${who}). It will free up if the claim is disclaimed or expires.`);
         return;
     }
     // Expiry disabled for the project: behave like the classic TTL-less bot.
     if (!expiryEnabled(cfg)) {
         await setStatus(octokit, ctx, item.itemId, claimedId);
-        await issues_assign(octokit, owner, repo, issueNumber, actor);
+        await issues_assign(repoOctokit, owner, repo, issueNumber, actor);
         const note = expiryArg.trim() ? ' (expiry ignored: this project doesn\'t track claim expiry)' : '';
-        await comment(octokit, owner, repo, issueNumber, `@${actor} you've claimed this task.${note}`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} you've claimed this task.${note}`);
         return;
     }
     const res = resolveExpiry(expiryArg, now, cfg.defaultTtl, cfg.maxTtlMs);
     if (!res.ok) {
-        await comment(octokit, owner, repo, issueNumber, `@${actor} ${res.reason}`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} ${res.reason}`);
         return;
     }
     // Fail-closed order: write the expiry BEFORE flipping to Claimed, so the item is never
@@ -32295,12 +32300,12 @@ async function handleClaim(deps, expiryArg) {
     // Then status, then assignment, then the human comment.
     await setExpiry(octokit, ctx, item.itemId, toStorage(res.expiry));
     await setStatus(octokit, ctx, item.itemId, claimedId);
-    await issues_assign(octokit, owner, repo, issueNumber, actor);
+    await issues_assign(repoOctokit, owner, repo, issueNumber, actor);
     const lines = [`@${actor} you've claimed this task — it expires **${formatExpiry(res.expiry)}**.`];
     if (res.usedDefault) {
         lines.push(`That's the project default. To set your own, comment e.g. \`claim 2w\`, \`claim 5 hours\`, or \`claim 2026-08-01\` — and \`claim <when>\` again any time to extend.`);
     }
-    await comment(octokit, owner, repo, issueNumber, lines.join('\n\n'));
+    await comment(repoOctokit, owner, repo, issueNumber, lines.join('\n\n'));
 }
 
 ;// CONCATENATED MODULE: ./src/commands/disclaim.ts
@@ -32309,20 +32314,20 @@ async function handleClaim(deps, expiryArg) {
 
 /** Handle `disclaim`: release a claim you hold. Removes only the actor (claimant-only). */
 async function handleDisclaim(deps) {
-    const { octokit, cfg, ctx, owner, repo, issueNumber, actor } = deps;
+    const { octokit, repoOctokit, cfg, ctx, owner, repo, issueNumber, actor } = deps;
     const item = await getIssueItem(octokit, owner, repo, issueNumber, ctx);
     if (!item)
         return; // not on the board; nothing to do
-    const assignees = await getAssignees(octokit, owner, repo, issueNumber);
+    const assignees = await getAssignees(repoOctokit, owner, repo, issueNumber);
     if (!assignees.includes(actor)) {
-        await comment(octokit, owner, repo, issueNumber, `@${actor} you're not the current claimant of this task, so there's nothing to disclaim.`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} you're not the current claimant of this task, so there's nothing to disclaim.`);
         return;
     }
     const unclaimedId = requireOption(ctx, cfg.statusUnclaimed);
     await setStatus(octokit, ctx, item.itemId, unclaimedId);
     await clearExpiry(octokit, ctx, item.itemId);
-    await unassign(octokit, owner, repo, issueNumber, actor);
-    await comment(octokit, owner, repo, issueNumber, `@${actor} you've released this task — it's available again.`);
+    await unassign(repoOctokit, owner, repo, issueNumber, actor);
+    await comment(repoOctokit, owner, repo, issueNumber, `@${actor} you've released this task — it's available again.`);
 }
 
 ;// CONCATENATED MODULE: ./src/commands/propose.ts
@@ -32336,26 +32341,26 @@ async function handleDisclaim(deps) {
  * The PR is validated (exists, open, targets this repo) before any state change.
  */
 async function handlePropose(deps, pr) {
-    const { octokit, cfg, ctx, owner, repo, issueNumber, actor } = deps;
-    const pull = await getPull(octokit, owner, repo, pr);
+    const { octokit, repoOctokit, cfg, ctx, owner, repo, issueNumber, actor } = deps;
+    const pull = await getPull(repoOctokit, owner, repo, pr);
     if (!pull) {
-        await comment(octokit, owner, repo, issueNumber, `@${actor} PR #${pr} doesn't exist in this repository.`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} PR #${pr} doesn't exist in this repository.`);
         return;
     }
     if (pull.state !== 'open') {
-        await comment(octokit, owner, repo, issueNumber, `@${actor} PR #${pr} is not open, so it can't be proposed.`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} PR #${pr} is not open, so it can't be proposed.`);
         return;
     }
     if (pull.baseRepoFullName.toLowerCase() !== `${owner}/${repo}`.toLowerCase()) {
-        await comment(octokit, owner, repo, issueNumber, `@${actor} PR #${pr} must target ${owner}/${repo}.`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} PR #${pr} must target ${owner}/${repo}.`);
         return;
     }
     const item = await getIssueItem(octokit, owner, repo, issueNumber, ctx);
     if (!item)
         return;
-    const assignees = await getAssignees(octokit, owner, repo, issueNumber);
+    const assignees = await getAssignees(repoOctokit, owner, repo, issueNumber);
     if (!assignees.includes(actor)) {
-        await comment(octokit, owner, repo, issueNumber, `@${actor} only the current claimant can propose a PR for this task.`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} only the current claimant can propose a PR for this task.`);
         return;
     }
     const inProgressId = optionId(ctx, cfg.statusInProgress);
@@ -32364,10 +32369,10 @@ async function handlePropose(deps, pr) {
     const claimedId = requireOption(ctx, cfg.statusClaimed);
     if (item.statusOptionId !== claimedId && item.statusOptionId !== inProgressId) {
         const name = item.statusOptionId ? ctx.statusNameById.get(item.statusOptionId) : 'unknown';
-        await comment(octokit, owner, repo, issueNumber, `@${actor} this task is **${name}**; claim it before proposing a PR.`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} this task is **${name}**; claim it before proposing a PR.`);
         return;
     }
-    await linkPullToIssue(octokit, owner, repo, pr, issueNumber, pull.body);
+    await linkPullToIssue(repoOctokit, owner, repo, pr, issueNumber, pull.body);
     // Refresh the expiry before flipping status, so the item is never In Progress with a
     // stale expiry (matters when expire-in-progress is enabled).
     let expiryNote = '';
@@ -32379,7 +32384,7 @@ async function handlePropose(deps, pr) {
         }
     }
     await setStatus(octokit, ctx, item.itemId, inProgressId);
-    await comment(octokit, owner, repo, issueNumber, `@${actor} linked PR #${pr}; task moved to **${cfg.statusInProgress}**.${expiryNote}`);
+    await comment(repoOctokit, owner, repo, issueNumber, `@${actor} linked PR #${pr}; task moved to **${cfg.statusInProgress}**.${expiryNote}`);
 }
 
 ;// CONCATENATED MODULE: ./src/commands/withdraw.ts
@@ -32391,27 +32396,27 @@ async function handlePropose(deps, pr) {
  * The claim (assignee + expiry) is left intact, matching the original bot.
  */
 async function handleWithdraw(deps, pr) {
-    const { octokit, cfg, ctx, owner, repo, issueNumber, actor } = deps;
+    const { octokit, repoOctokit, cfg, ctx, owner, repo, issueNumber, actor } = deps;
     const item = await getIssueItem(octokit, owner, repo, issueNumber, ctx);
     if (!item)
         return;
-    const assignees = await getAssignees(octokit, owner, repo, issueNumber);
+    const assignees = await getAssignees(repoOctokit, owner, repo, issueNumber);
     if (!assignees.includes(actor)) {
-        await comment(octokit, owner, repo, issueNumber, `@${actor} only the current claimant can withdraw a PR for this task.`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} only the current claimant can withdraw a PR for this task.`);
         return;
     }
     const claimedId = requireOption(ctx, cfg.statusClaimed);
     const inProgressId = optionId(ctx, cfg.statusInProgress);
     if (inProgressId === null || item.statusOptionId !== inProgressId) {
         const name = item.statusOptionId ? ctx.statusNameById.get(item.statusOptionId) : 'unknown';
-        await comment(octokit, owner, repo, issueNumber, `@${actor} this task is **${name}**, not ${cfg.statusInProgress}; nothing to withdraw.`);
+        await comment(repoOctokit, owner, repo, issueNumber, `@${actor} this task is **${name}**, not ${cfg.statusInProgress}; nothing to withdraw.`);
         return;
     }
-    const pull = await getPull(octokit, owner, repo, pr);
+    const pull = await getPull(repoOctokit, owner, repo, pr);
     if (pull)
-        await unlinkPullFromIssue(octokit, owner, repo, pr, issueNumber, pull.body);
+        await unlinkPullFromIssue(repoOctokit, owner, repo, pr, issueNumber, pull.body);
     await setStatus(octokit, ctx, item.itemId, claimedId);
-    await comment(octokit, owner, repo, issueNumber, `@${actor} withdrew PR #${pr}; task is back to **${cfg.statusClaimed}** and still yours.`);
+    await comment(repoOctokit, owner, repo, issueNumber, `@${actor} withdrew PR #${pr}; task is back to **${cfg.statusClaimed}** and still yours.`);
 }
 
 ;// CONCATENATED MODULE: ./src/sweep.ts
@@ -32437,7 +32442,7 @@ function sameSet(a, b) {
  * is only expired if its status, expiry, and assignees are unchanged since enumeration and
  * still due at the moment of mutation.
  */
-async function runSweep(octokit, cfg, ctx) {
+async function runSweep(octokit, repoOctokit, cfg, ctx) {
     if (!expiryEnabled(cfg)) {
         core.info('Expiry is disabled for this project (default-ttl: none); sweep is a no-op.');
         return;
@@ -32464,7 +32469,7 @@ async function runSweep(octokit, cfg, ctx) {
     let backfilled = 0;
     for (const c of candidates) {
         try {
-            await processCandidate(octokit, cfg, ctx, c, now, () => { expired++; }, () => { backfilled++; });
+            await processCandidate(octokit, repoOctokit, cfg, ctx, c, now, () => { expired++; }, () => { backfilled++; });
         }
         catch (err) {
             core.warning(`Item for issue #${c.issueNumber}: ${err.message}`);
@@ -32472,7 +32477,7 @@ async function runSweep(octokit, cfg, ctx) {
     }
     core.info(`Sweep complete: ${expired} expired, ${backfilled} backfilled.`);
 }
-async function processCandidate(octokit, cfg, ctx, c, now, onExpire, onBackfill) {
+async function processCandidate(octokit, repoOctokit, cfg, ctx, c, now, onExpire, onBackfill) {
     const owner = c.issueOwner;
     const repo = c.issueRepo;
     if (!owner || !repo)
@@ -32489,7 +32494,7 @@ async function processCandidate(octokit, cfg, ctx, c, now, onExpire, onBackfill)
                 return;
             if (fresh.statusOptionId !== c.statusOptionId || fresh.expiryText)
                 return;
-            const assignees = await getAssignees(octokit, owner, repo, c.issueNumber);
+            const assignees = await getAssignees(repoOctokit, owner, repo, c.issueNumber);
             if (!sameSet(assignees, c.assignees))
                 return;
             const expiry = new Date(now.getTime() + (cfg.defaultTtl.disabled ? 30 * MS_PER_DAY : cfg.defaultTtl.ms));
@@ -32517,7 +32522,7 @@ async function processCandidate(octokit, cfg, ctx, c, now, onExpire, onBackfill)
         return; // status changed since enumeration
     if (fresh.expiryText !== c.expiryText)
         return; // renewed/cleared since enumeration
-    const assignees = await getAssignees(octokit, owner, repo, c.issueNumber);
+    const assignees = await getAssignees(repoOctokit, owner, repo, c.issueNumber);
     if (!sameSet(assignees, c.assignees))
         return; // assignees changed since enumeration
     // Re-confirm due (a non-legacy candidate must still be past-due).
@@ -32532,10 +32537,10 @@ async function processCandidate(octokit, cfg, ctx, c, now, onExpire, onBackfill)
     await setStatus(octokit, ctx, c.itemId, unclaimedId);
     await clearExpiry(octokit, ctx, c.itemId);
     for (const login of assignees) {
-        await unassign(octokit, owner, repo, c.issueNumber, login);
+        await unassign(repoOctokit, owner, repo, c.issueNumber, login);
     }
     const wasDue = c.expiryText ? formatExpiry(new Date(c.expiryText)) : 'now (legacy claim, backfill=expire)';
-    await comment(octokit, owner, repo, c.issueNumber, `:hourglass: This claim expired (was due **${wasDue}**) and has been released back to **${cfg.statusUnclaimed}**. Comment \`claim\` to pick it up again.`);
+    await comment(repoOctokit, owner, repo, c.issueNumber, `:hourglass: This claim expired (was due **${wasDue}**) and has been released back to **${cfg.statusUnclaimed}**. Comment \`claim\` to pick it up again.`);
     onExpire();
     core.info(`#${c.issueNumber}: expired and released.`);
 }
@@ -32562,13 +32567,13 @@ async function processCandidate(octokit, cfg, ctx, c, now, onExpire, onBackfill)
  *
  * Every transition is guarded on the item's current status so manual board edits aren't stomped.
  */
-async function runLifecycle(octokit, cfg, ctx) {
+async function runLifecycle(octokit, repoOctokit, cfg, ctx) {
     const event = github.context.eventName;
     const action = github.context.payload.action ?? '';
     if (event === 'issues')
         return runIssueEvent(octokit, cfg, ctx, action);
     if (event === 'pull_request' || event === 'pull_request_target')
-        return runPullEvent(octokit, cfg, ctx, action);
+        return runPullEvent(octokit, repoOctokit, cfg, ctx, action);
     core.info(`Lifecycle: no handler for event ${JSON.stringify(event)}; nothing to do.`);
 }
 async function runIssueEvent(octokit, cfg, ctx, action) {
@@ -32624,7 +32629,7 @@ async function runIssueEvent(octokit, cfg, ctx, action) {
         }
     }
 }
-async function runPullEvent(octokit, cfg, ctx, action) {
+async function runPullEvent(octokit, repoOctokit, cfg, ctx, action) {
     const pr = github.context.payload.pull_request;
     if (!pr?.number) {
         core.info('No pull_request payload; nothing to do.');
@@ -32632,7 +32637,7 @@ async function runPullEvent(octokit, cfg, ctx, action) {
     }
     const { owner, repo } = github.context.repo;
     const author = pr.user?.login ?? '';
-    const issues = await getClosingIssueNumbers(octokit, owner, repo, pr.number);
+    const issues = await getClosingIssueNumbers(repoOctokit, owner, repo, pr.number);
     if (issues.length === 0) {
         core.info(`PR #${pr.number}: no "Closes #N" reference to an issue in ${owner}/${repo}; nothing to do.`);
         return;
@@ -32641,14 +32646,14 @@ async function runPullEvent(octokit, cfg, ctx, action) {
     const closed = pr.state === 'closed' || action === 'closed';
     for (const num of issues) {
         try {
-            await applyPullToIssue(octokit, cfg, ctx, owner, repo, num, pr.number, { merged, closed, draft: pr.draft === true, author });
+            await applyPullToIssue(octokit, repoOctokit, cfg, ctx, owner, repo, num, pr.number, { merged, closed, draft: pr.draft === true, author });
         }
         catch (err) {
             core.warning(`PR #${pr.number} -> issue #${num}: ${err.message}`);
         }
     }
 }
-async function applyPullToIssue(octokit, cfg, ctx, owner, repo, num, prNumber, pr) {
+async function applyPullToIssue(octokit, repoOctokit, cfg, ctx, owner, repo, num, prNumber, pr) {
     const item = await getIssueItem(octokit, owner, repo, num, ctx);
     if (!item)
         return; // issue isn't on the board
@@ -32667,19 +32672,19 @@ async function applyPullToIssue(octokit, cfg, ctx, owner, repo, num, prNumber, p
             if (item.statusOptionId === completed)
                 return;
             await setStatus(octokit, ctx, item.itemId, completed);
-            await comment(octokit, owner, repo, num, `:tada: PR #${prNumber} merged; task moved to **${cfg.statusCompleted}**.`);
+            await comment(repoOctokit, owner, repo, num, `:tada: PR #${prNumber} merged; task moved to **${cfg.statusCompleted}**.`);
             return;
         }
         // Closed without merging: drop an active item back to Claimed, keeping the claim intact —
         // but only if no other open PR still references the issue (don't regress live review work).
         if (claimed && (item.statusOptionId === inProgress || item.statusOptionId === inReview)) {
-            const others = (await getOpenClosingPullNumbers(octokit, owner, repo, num)).filter((n) => n !== prNumber);
+            const others = (await getOpenClosingPullNumbers(repoOctokit, owner, repo, num)).filter((n) => n !== prNumber);
             if (others.length > 0) {
                 core.info(`#${num}: PR #${prNumber} closed unmerged, but PR(s) ${others.join(', ')} still open; leaving status.`);
                 return;
             }
             if (await casSetStatus(octokit, ctx, owner, repo, num, item, claimed)) {
-                await comment(octokit, owner, repo, num, `PR #${prNumber} was closed without merging; task is back to **${cfg.statusClaimed}** (still yours).`);
+                await comment(repoOctokit, owner, repo, num, `PR #${prNumber} was closed without merging; task is back to **${cfg.statusClaimed}** (still yours).`);
             }
         }
         return;
@@ -32692,10 +32697,10 @@ async function applyPullToIssue(octokit, cfg, ctx, owner, repo, num, prNumber, p
     // claimed by someone else. This matters because `pull_request_target` runs with the write
     // token on PRs from forks, where the author is untrusted.
     const available = item.statusOptionId === null || item.statusOptionId === unclaimed;
-    const assignees = await getAssignees(octokit, owner, repo, num);
+    const assignees = await getAssignees(repoOctokit, owner, repo, num);
     if (available && assignees.length === 0) {
         if (pr.author)
-            await issues_assign(octokit, owner, repo, num, pr.author); // auto-claim for the PR author
+            await issues_assign(repoOctokit, owner, repo, num, pr.author); // auto-claim for the PR author
     }
     else if (!pr.author || !assignees.includes(pr.author)) {
         core.info(`#${num}: held by someone other than ${pr.author || '(unknown author)'}; lifecycle leaves it alone.`);
@@ -32716,7 +32721,7 @@ async function applyPullToIssue(octokit, cfg, ctx, owner, repo, num, prNumber, p
     if (item.statusOptionId === target)
         return; // already there; stay quiet (idempotent on re-fires)
     if (await casSetStatus(octokit, ctx, owner, repo, num, item, target)) {
-        await comment(octokit, owner, repo, num, `PR #${prNumber} linked; task moved to **${targetName}**.`);
+        await comment(repoOctokit, owner, repo, num, `PR #${prNumber} linked; task moved to **${targetName}**.`);
     }
 }
 /**
@@ -32750,6 +32755,9 @@ async function casSetStatus(octokit, ctx, owner, repo, num, seen, targetOptionId
 async function main() {
     const cfg = readConfig();
     const octokit = (0,github.getOctokit)(cfg.token);
+    // Separate client for Issue/PR REST + repo-level GraphQL reads, so those run on repo-token
+    // (the workflow GITHUB_TOKEN) rather than the Projects PAT. Same client when repo-token is unset.
+    const repoOctokit = (0,github.getOctokit)(cfg.repoToken);
     const { owner, repo } = github.context.repo;
     // Resolve the board + fields. This is also our read-side permission probe: if the token
     // cannot see the project, we fail here with a clear message rather than deep in a mutation.
@@ -32769,11 +32777,11 @@ async function main() {
         return;
     }
     if (cfg.mode === 'sweep') {
-        await runSweep(octokit, cfg, ctx);
+        await runSweep(octokit, repoOctokit, cfg, ctx);
         return;
     }
     if (cfg.mode === 'lifecycle') {
-        await runLifecycle(octokit, cfg, ctx);
+        await runLifecycle(octokit, repoOctokit, cfg, ctx);
         return;
     }
     // mode === 'command'
@@ -32794,6 +32802,7 @@ async function main() {
     }
     const deps = {
         octokit,
+        repoOctokit,
         cfg,
         ctx,
         owner,

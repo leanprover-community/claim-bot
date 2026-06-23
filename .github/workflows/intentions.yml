@@ -89,7 +89,11 @@ jobs:
     concurrency:
       group: intentions-issue-${{ github.event.issue.number }}
       cancel-in-progress: false
-    permissions: {}
+    # Issue/PR writes run on this GITHUB_TOKEN (passed as repo-token), so the project-token only
+    # needs Projects access. The caller must grant the same — permissions are min(caller, called).
+    permissions:
+      issues: write
+      pull-requests: write
     steps:
       - id: app-token
         if: inputs.app-id != ''
@@ -103,6 +107,7 @@ jobs:
         with:
           mode: command
           project-token: ${{ steps.app-token.outputs.token || secrets.project-token }}
+          repo-token: ${{ github.token }}
           project-title: ${{ inputs.project-title }}
           status-field: ${{ inputs.status-field }}
           status-unclaimed: ${{ inputs.status-unclaimed }}
@@ -123,7 +128,9 @@ jobs:
     concurrency:
       group: intentions-item-${{ github.event.issue.number || github.event.pull_request.number }}
       cancel-in-progress: false
-    permissions: {}
+    permissions:
+      issues: write
+      pull-requests: write
     steps:
       - id: app-token
         if: inputs.app-id != ''
@@ -136,6 +143,7 @@ jobs:
         with:
           mode: lifecycle
           project-token: ${{ steps.app-token.outputs.token || secrets.project-token }}
+          repo-token: ${{ github.token }}
           project-title: ${{ inputs.project-title }}
           status-field: ${{ inputs.status-field }}
           status-unclaimed: ${{ inputs.status-unclaimed }}
@@ -155,7 +163,9 @@ jobs:
     concurrency:
       group: intentions-sweep
       cancel-in-progress: false
-    permissions: {}
+    # The sweep clears assignees and comments via repo-token (this GITHUB_TOKEN).
+    permissions:
+      issues: write
     steps:
       - id: app-token
         if: inputs.app-id != ''
@@ -168,6 +178,7 @@ jobs:
         with:
           mode: sweep
           project-token: ${{ steps.app-token.outputs.token || secrets.project-token }}
+          repo-token: ${{ github.token }}
           project-title: ${{ inputs.project-title }}
           status-field: ${{ inputs.status-field }}
           status-unclaimed: ${{ inputs.status-unclaimed }}

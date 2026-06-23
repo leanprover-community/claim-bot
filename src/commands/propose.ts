@@ -9,27 +9,27 @@ import { type Deps, optionId, requireOption } from './deps.js'
  * The PR is validated (exists, open, targets this repo) before any state change.
  */
 export async function handlePropose(deps: Deps, pr: number): Promise<void> {
-  const { octokit, cfg, ctx, owner, repo, issueNumber, actor } = deps
+  const { octokit, repoOctokit, cfg, ctx, owner, repo, issueNumber, actor } = deps
 
-  const pull = await getPull(octokit, owner, repo, pr)
+  const pull = await getPull(repoOctokit, owner, repo, pr)
   if (!pull) {
-    await comment(octokit, owner, repo, issueNumber, `@${actor} PR #${pr} doesn't exist in this repository.`)
+    await comment(repoOctokit, owner, repo, issueNumber, `@${actor} PR #${pr} doesn't exist in this repository.`)
     return
   }
   if (pull.state !== 'open') {
-    await comment(octokit, owner, repo, issueNumber, `@${actor} PR #${pr} is not open, so it can't be proposed.`)
+    await comment(repoOctokit, owner, repo, issueNumber, `@${actor} PR #${pr} is not open, so it can't be proposed.`)
     return
   }
   if (pull.baseRepoFullName.toLowerCase() !== `${owner}/${repo}`.toLowerCase()) {
-    await comment(octokit, owner, repo, issueNumber, `@${actor} PR #${pr} must target ${owner}/${repo}.`)
+    await comment(repoOctokit, owner, repo, issueNumber, `@${actor} PR #${pr} must target ${owner}/${repo}.`)
     return
   }
 
   const item = await getIssueItem(octokit, owner, repo, issueNumber, ctx)
   if (!item) return
-  const assignees = await getAssignees(octokit, owner, repo, issueNumber)
+  const assignees = await getAssignees(repoOctokit, owner, repo, issueNumber)
   if (!assignees.includes(actor)) {
-    await comment(octokit, owner, repo, issueNumber, `@${actor} only the current claimant can propose a PR for this task.`)
+    await comment(repoOctokit, owner, repo, issueNumber, `@${actor} only the current claimant can propose a PR for this task.`)
     return
   }
 
@@ -38,11 +38,11 @@ export async function handlePropose(deps: Deps, pr: number): Promise<void> {
   const claimedId = requireOption(ctx, cfg.statusClaimed)
   if (item.statusOptionId !== claimedId && item.statusOptionId !== inProgressId) {
     const name = item.statusOptionId ? ctx.statusNameById.get(item.statusOptionId) : 'unknown'
-    await comment(octokit, owner, repo, issueNumber, `@${actor} this task is **${name}**; claim it before proposing a PR.`)
+    await comment(repoOctokit, owner, repo, issueNumber, `@${actor} this task is **${name}**; claim it before proposing a PR.`)
     return
   }
 
-  await linkPullToIssue(octokit, owner, repo, pr, issueNumber, pull.body)
+  await linkPullToIssue(repoOctokit, owner, repo, pr, issueNumber, pull.body)
 
   // Refresh the expiry before flipping status, so the item is never In Progress with a
   // stale expiry (matters when expire-in-progress is enabled).
@@ -55,5 +55,5 @@ export async function handlePropose(deps: Deps, pr: number): Promise<void> {
     }
   }
   await setStatus(octokit, ctx, item.itemId, inProgressId)
-  await comment(octokit, owner, repo, issueNumber, `@${actor} linked PR #${pr}; task moved to **${cfg.statusInProgress}**.${expiryNote}`)
+  await comment(repoOctokit, owner, repo, issueNumber, `@${actor} linked PR #${pr}; task moved to **${cfg.statusInProgress}**.${expiryNote}`)
 }

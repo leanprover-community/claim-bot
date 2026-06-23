@@ -5,7 +5,10 @@ import type { ProjectContext } from '../github/projects.js'
 type Octokit = ReturnType<typeof getOctokit>
 
 export interface Deps {
+  /** Client on the project token — Projects v2 GraphQL writes. */
   octokit: Octokit
+  /** Client on repo-token (the workflow GITHUB_TOKEN) — Issue/PR REST + repo-level GraphQL. */
+  repoOctokit: Octokit
   cfg: Config
   ctx: ProjectContext
   owner: string

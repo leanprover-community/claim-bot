@@ -86,11 +86,13 @@ a clean `…[bot]` identity, or **B** if you just want something quick.
 
 #### B. Fine-grained PAT
 
-Create a fine-grained PAT with **Issues: R/W**, **Pull requests: R/W**, and **Projects: R/W**
-(for an org-owned board the Projects permission is under *Organization permissions*, and the
-token's resource owner must be that org). Add it as secret **`INTENTIONS_BOT_TOKEN`**, and in the
-workflows below pass `project-token: ${{ secrets.INTENTIONS_BOT_TOKEN }}` instead of the `app-id` /
-`app-private-key` lines.
+Create a fine-grained PAT with **Projects: R/W** (for an org-owned board the Projects permission
+is under *Organization permissions*, and the token's resource owner must be that org). Add it as
+secret **`INTENTIONS_BOT_TOKEN`**, and in the workflows below pass
+`project-token: ${{ secrets.INTENTIONS_BOT_TOKEN }}` instead of the `app-id` / `app-private-key`
+lines. The PAT needs **only** Projects access: the reusable workflow assigns issues and edits PRs
+with the repo's own `GITHUB_TOKEN` (passed as `repo-token`). If you instead call the action
+directly without a `repo-token`, the PAT also needs **Issues: R/W** and **Pull requests: R/W**.
 
 <details><summary>Setting up the App by hand instead of the one-click form</summary>
 
@@ -159,6 +161,7 @@ All inputs (set on the reusable workflow):
 | input | default | meaning |
 |---|---|---|
 | `project-title` | — (required) | exact title of the Projects v2 board |
+| `repo-token` | the job `GITHUB_TOKEN` | token for Issue/PR writes; the reusable workflow sets it so `project-token` only needs Projects access |
 | `default-ttl` | `30d` | TTL for a bare `claim`; `none`/`off` disables expiry |
 | `max-ttl` | `90d` | maximum requestable TTL |
 | `status-field` | `Status` | single-select field name |
