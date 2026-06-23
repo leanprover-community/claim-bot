@@ -5,8 +5,11 @@ the bot assigns them and moves a card on a Projects v2 board. Claims can carry a
 configurable **expiry (TTL)**, so abandoned work is released automatically instead of
 blocking everyone forever.
 
-This is a single, reusable GitHub Action — projects opt in with a couple of small workflow
-files, no copy-pasted scripts.
+It's up to individual projects to interpret these claims: some may treat them as
+merely informational while other may expect that they are carefully respected.
+
+This is a reusable GitHub Action. Projects install it with a couple of small workflow
+files described below.
 
 ## How it works
 
@@ -178,7 +181,7 @@ always `npm run build` and commit the result with any source change. Contributio
 
 ## Credits
 
-This bot is a reimplementation of, and owes everything to, the claim/dashboard workflow
+This bot is a reimplementation of the claim/dashboard workflow
 originally designed and built by **[Pietro Monticone](https://github.com/pitmonticone)** and
 **[Shreyas Srinivas](https://github.com/Shreyas4991)** for the
 [Equational Theories Project](https://github.com/teorth/equational_theories), and
