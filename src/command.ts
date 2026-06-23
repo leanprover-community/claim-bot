@@ -30,10 +30,12 @@ export function parseCommand(body: string): Command | null {
   const withdraw = normalized.match(/^withdraw\s*(?:pr\s*)?#(\d+)$/)
   if (withdraw) return { kind: 'withdraw', pr: Number(withdraw[1]) }
 
-  // claim: match on the first line only; following lines (if any) become the note.
-  const newlineIdx = body.search(/\r?\n/)
-  const firstLine = newlineIdx === -1 ? body : body.slice(0, newlineIdx)
-  const note = newlineIdx === -1 ? '' : body.slice(newlineIdx).trim()
+  // claim: match on the first line only; following lines (if any) become the note. Leading blank
+  // lines are tolerated (trimStart) so an accidental newline before `claim` still parses.
+  const fromCommand = body.trimStart()
+  const newlineIdx = fromCommand.search(/\r?\n/)
+  const firstLine = newlineIdx === -1 ? fromCommand : fromCommand.slice(0, newlineIdx)
+  const note = newlineIdx === -1 ? '' : fromCommand.slice(newlineIdx).trim()
   const firstNormalized = firstLine.replace(/\s+/g, ' ').trim().toLowerCase()
   const claim = firstNormalized.match(/^claim(?:\s+(.*))?$/)
   if (claim) return { kind: 'claim', expiryArg: claim[1] ?? '', note }

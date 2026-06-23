@@ -1,3 +1,4 @@
+import * as core from '@actions/core'
 import type { getOctokit } from '@actions/github'
 
 type Octokit = ReturnType<typeof getOctokit>
@@ -152,14 +153,18 @@ export async function loadFields(
     expiryFieldId = expiry.id
   }
 
-  // The note field is optional; if present it must be a Text field (we store freeform text).
+  // The note field is optional. Unlike expiry, a wrong-typed field here disables notes with a
+  // warning rather than failing the whole action: the default name "Claim Note" may collide with
+  // a pre-existing field on a board that never opts into notes, and that must not break command,
+  // sweep, or lifecycle runs.
   let noteFieldId: string | null = null
   const note = nodes.find((n) => n.name === noteFieldName)
   if (note) {
     if (note.__typename !== 'ProjectV2Field' || note.dataType !== 'TEXT') {
-      throw new Error(`Note field ${JSON.stringify(noteFieldName)} must be a Text field, but it is ${note.dataType ?? note.__typename}.`)
+      core.warning(`Note field ${JSON.stringify(noteFieldName)} is a ${note.dataType ?? note.__typename}, not a Text field; claim notes are disabled. Make it a Text field or point note-field at a different field.`)
+    } else {
+      noteFieldId = note.id
     }
-    noteFieldId = note.id
   }
 
   return { statusFieldId: status.id, statusOptionIdByName, statusNameById, expiryFieldId, noteFieldId }

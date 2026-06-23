@@ -22,6 +22,9 @@ test('claim: scrapes following lines into the note (verbatim, trimmed)', () => {
   // outer blank lines around the note are trimmed.
   assert.deepEqual(parseCommand('claim\n\n  Heads up: blocked on #5  \n\n'),
     { kind: 'claim', expiryArg: '', note: 'Heads up: blocked on #5' })
+  // leading blank lines before the command are tolerated.
+  assert.deepEqual(parseCommand('\n\nclaim\nnote here'),
+    { kind: 'claim', expiryArg: '', note: 'note here' })
 })
 
 test('disclaim is distinguished from claim', () => {
