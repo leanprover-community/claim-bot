@@ -1,18 +1,39 @@
+import * as core from '@actions/core'
 import { expiryEnabled } from '../config.js'
 import { resolveExpiry, toStorage, formatExpiry } from '../ttl.js'
-import { getIssueItem, setStatus, setExpiry } from '../github/projects.js'
+import { getIssueItem, setStatus, setExpiry, setNote } from '../github/projects.js'
 import { getAssignees, assign, comment } from '../github/issues.js'
 import { type Deps, optionId, requireOption, isTerminal } from './deps.js'
 
+/** Project v2 text fields are bounded; cap the scraped note so a long comment can't fail the write. */
+const MAX_NOTE_LENGTH = 1024
+
 /**
- * Handle `claim [expiry]`.
+ * Record the freeform note scraped from the claim comment, if one was given and the board has
+ * a note field. Silent no-op when the note is empty; logs (but does not fail) when the project
+ * has no note field configured, since the note is an optional convenience.
+ */
+async function writeNote(deps: Deps, itemId: string, note: string): Promise<void> {
+  const { octokit, ctx } = deps
+  const trimmed = note.trim()
+  if (!trimmed) return
+  if (!ctx.noteFieldId) {
+    core.info(`A claim note was provided but the board has no "${deps.cfg.noteField}" Text field; ignoring it.`)
+    return
+  }
+  const text = trimmed.length > MAX_NOTE_LENGTH ? `${trimmed.slice(0, MAX_NOTE_LENGTH - 1)}…` : trimmed
+  await setNote(octokit, ctx, itemId, text)
+}
+
+/**
+ * Handle `claim [expiry]` plus an optional freeform note (the lines following the command).
  *
  * Resolution order (Codex hardening): load item + assignees + status FIRST, then branch.
  * If the actor already holds the claim, treat this as a renew/extend; otherwise require an
  * Unclaimed item with no assignees. Writes are ordered to fail closed: status + expiry are
  * set before assignment, so the sweep never sees a Claimed item with a missing expiry.
  */
-export async function handleClaim(deps: Deps, expiryArg: string): Promise<void> {
+export async function handleClaim(deps: Deps, expiryArg: string, note: string): Promise<void> {
   const { octokit, repoOctokit, cfg, ctx, owner, repo, issueNumber, actor } = deps
   const now = new Date()
 
@@ -45,6 +66,7 @@ export async function handleClaim(deps: Deps, expiryArg: string): Promise<void> 
       return
     }
     await setExpiry(octokit, ctx, item.itemId, toStorage(res.expiry))
+    await writeNote(deps, item.itemId, note)
     await comment(repoOctokit, owner, repo, issueNumber,
       `@${actor} claim renewed — now expires **${formatExpiry(res.expiry)}**.`)
     return
@@ -67,8 +89,9 @@ export async function handleClaim(deps: Deps, expiryArg: string): Promise<void> 
   if (!expiryEnabled(cfg)) {
     await setStatus(octokit, ctx, item.itemId, claimedId)
     await assign(repoOctokit, owner, repo, issueNumber, actor)
-    const note = expiryArg.trim() ? ' (expiry ignored: this project doesn\'t track claim expiry)' : ''
-    await comment(repoOctokit, owner, repo, issueNumber, `@${actor} you've claimed this task.${note}`)
+    await writeNote(deps, item.itemId, note)
+    const suffix = expiryArg.trim() ? ' (expiry ignored: this project doesn\'t track claim expiry)' : ''
+    await comment(repoOctokit, owner, repo, issueNumber, `@${actor} you've claimed this task.${suffix}`)
     return
   }
 
@@ -84,6 +107,7 @@ export async function handleClaim(deps: Deps, expiryArg: string): Promise<void> 
   await setExpiry(octokit, ctx, item.itemId, toStorage(res.expiry))
   await setStatus(octokit, ctx, item.itemId, claimedId)
   await assign(repoOctokit, owner, repo, issueNumber, actor)
+  await writeNote(deps, item.itemId, note)
 
   const lines = [`@${actor} you've claimed this task — it expires **${formatExpiry(res.expiry)}**.`]
   if (res.usedDefault) {
