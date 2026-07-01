@@ -99,6 +99,7 @@ export function resolveExpiry(
   now: Date,
   defaultTtl: TtlSetting,
   maxTtlMs: number | null,
+  opts: { requireDate?: boolean } = {},
 ): ExpiryResolution {
   const cleaned = arg.trim().replace(/^until\s+/i, '').trim()
 
@@ -111,19 +112,30 @@ export function resolveExpiry(
     return { ok: true, expiry: new Date(now.getTime() + defaultTtl.ms), usedDefault: true }
   }
 
-  // Explicit argument: a duration or an absolute instant.
+  // Explicit argument: a duration or an absolute instant. With `requireDate`, only an absolute
+  // date is accepted — a duration is refused so the recorded expiry is a date a reader can see
+  // without knowing when the claim was made.
   let expiry: Date | null = null
   const durationMs = parseDurationMs(cleaned)
   if (durationMs !== null) {
+    if (opts.requireDate) {
+      return {
+        ok: false,
+        reason: `the expiry ${JSON.stringify(arg.trim())} is a duration, but this field needs an absolute date like \`2026-08-01\`.`,
+      }
+    }
     expiry = new Date(now.getTime() + durationMs)
   } else {
     expiry = parseInstant(cleaned)
   }
 
   if (expiry === null) {
+    const grammar = opts.requireDate
+      ? 'a date like `2026-08-01`'
+      : 'a duration like `1h`, `7d`, `3 weeks`, or a date like `2026-08-01`'
     return {
       ok: false,
-      reason: `could not understand the expiry ${JSON.stringify(arg.trim())}. Use a duration like \`1h\`, \`7d\`, \`3 weeks\`, or a date like \`2026-08-01\`.`,
+      reason: `could not understand the expiry ${JSON.stringify(arg.trim())}. Use ${grammar}.`,
     }
   }
 

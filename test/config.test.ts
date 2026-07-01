@@ -75,6 +75,13 @@ test('claim-expiry-field defaults empty and is overridable', () => {
   assert.equal(readConfig().claimExpiryField, 'Credible expiry date')
 })
 
+test('claim-expiry-require-date defaults false and is overridable', () => {
+  setInputs(required)
+  assert.equal(readConfig().claimExpiryRequireDate, false)
+  setInputs({ ...required, 'claim-expiry-require-date': 'true' })
+  assert.equal(readConfig().claimExpiryRequireDate, true)
+})
+
 test('note-field defaults and is overridable', () => {
   setInputs(required)
   assert.equal(readConfig().noteField, 'Claim Note')

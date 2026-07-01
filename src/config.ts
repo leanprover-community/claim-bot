@@ -26,6 +26,7 @@ export interface Config {
   autoAddLabels: string[]
   claimOnOpen: boolean
   claimExpiryField: string
+  claimExpiryRequireDate: boolean
 }
 
 /** True when the project has turned expiry off entirely (default-ttl: none). */
@@ -93,6 +94,7 @@ export function readConfig(): Config {
       .filter(Boolean),
     claimOnOpen: boolInput('claim-on-open', false),
     claimExpiryField: core.getInput('claim-expiry-field') || '',
+    claimExpiryRequireDate: boolInput('claim-expiry-require-date', false),
   }
 }
 

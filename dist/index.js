@@ -31780,7 +31780,7 @@ function parseInstant(text) {
  * @param defaultTtl parsed `default-ttl` setting (may be disabled)
  * @param maxTtlMs   maximum allowed TTL in ms (null = no maximum)
  */
-function resolveExpiry(arg, now, defaultTtl, maxTtlMs) {
+function resolveExpiry(arg, now, defaultTtl, maxTtlMs, opts = {}) {
     const cleaned = arg.trim().replace(/^until\s+/i, '').trim();
     // No argument: use the project default.
     if (cleaned === '') {
@@ -31790,19 +31790,30 @@ function resolveExpiry(arg, now, defaultTtl, maxTtlMs) {
         }
         return { ok: true, expiry: new Date(now.getTime() + defaultTtl.ms), usedDefault: true };
     }
-    // Explicit argument: a duration or an absolute instant.
+    // Explicit argument: a duration or an absolute instant. With `requireDate`, only an absolute
+    // date is accepted — a duration is refused so the recorded expiry is a date a reader can see
+    // without knowing when the claim was made.
     let expiry = null;
     const durationMs = parseDurationMs(cleaned);
     if (durationMs !== null) {
+        if (opts.requireDate) {
+            return {
+                ok: false,
+                reason: `the expiry ${JSON.stringify(arg.trim())} is a duration, but this field needs an absolute date like \`2026-08-01\`.`,
+            };
+        }
         expiry = new Date(now.getTime() + durationMs);
     }
     else {
         expiry = parseInstant(cleaned);
     }
     if (expiry === null) {
+        const grammar = opts.requireDate
+            ? 'a date like `2026-08-01`'
+            : 'a duration like `1h`, `7d`, `3 weeks`, or a date like `2026-08-01`';
         return {
             ok: false,
-            reason: `could not understand the expiry ${JSON.stringify(arg.trim())}. Use a duration like \`1h\`, \`7d\`, \`3 weeks\`, or a date like \`2026-08-01\`.`,
+            reason: `could not understand the expiry ${JSON.stringify(arg.trim())}. Use ${grammar}.`,
         };
     }
     if (expiry.getTime() <= now.getTime()) {
@@ -31904,6 +31915,7 @@ function readConfig() {
             .filter(Boolean),
         claimOnOpen: boolInput('claim-on-open', false),
         claimExpiryField: core.getInput('claim-expiry-field') || '',
+        claimExpiryRequireDate: boolInput('claim-expiry-require-date', false),
     };
 }
 /** Boolean input with a default when unset (core.getBooleanInput throws on empty). */
@@ -32946,12 +32958,23 @@ async function autoClaimOnOpen(octokit, repoOctokit, cfg, ctx, owner, repo, num,
         return;
     }
     let expiry = null;
+    let expiryNote = '';
     if (expiryEnabled(cfg)) {
         const fromForm = cfg.claimExpiryField ? readFormField(body, cfg.claimExpiryField) : null;
         const now = new Date();
-        let res = resolveExpiry(fromForm ?? '', now, cfg.defaultTtl, cfg.maxTtlMs);
-        if (!res.ok)
-            res = resolveExpiry('', now, cfg.defaultTtl, cfg.maxTtlMs); // bad/oversized form value -> default
+        let res = resolveExpiry(fromForm ?? '', now, cfg.defaultTtl, cfg.maxTtlMs, {
+            requireDate: cfg.claimExpiryRequireDate,
+        });
+        if (!res.ok) {
+            // A bad, oversized, or (when a date is required) non-date form value falls back to the
+            // default; note it so the registrant sees their value wasn't used and can fix it with `claim`.
+            if (fromForm) {
+                expiryNote = cfg.claimExpiryRequireDate
+                    ? ` I couldn't use "${fromForm}" — this project needs an absolute date like \`2026-09-01\` — so I've used the default for now.`
+                    : ` I couldn't read "${fromForm}" as an expiry, so I've used the default for now.`;
+            }
+            res = resolveExpiry('', now, cfg.defaultTtl, cfg.maxTtlMs);
+        }
         if (res.ok) {
             await setExpiry(octokit, ctx, itemId, toStorage(res.expiry));
             expiry = res.expiry;
@@ -32961,8 +32984,12 @@ async function autoClaimOnOpen(octokit, repoOctokit, cfg, ctx, owner, repo, num,
     let first = `@${author} you're now registered as working on this — no extra step needed.`;
     if (expiry)
         first += ` This registration expires **${formatExpiry(expiry)}**.`;
+    if (expiryNote)
+        first += expiryNote;
+    // When the form requires an absolute date, don't advertise a duration example the form would reject.
+    const changeHint = cfg.claimExpiryRequireDate ? 'e.g. `claim 2026-09-01`' : 'e.g. `claim 2 weeks` or `claim 2026-09-01`';
     const second = expiryEnabled(cfg)
-        ? 'Comment `claim <when>` to change the expiry (e.g. `claim 2 weeks` or `claim 2026-09-01`), `claim` again to renew, or `disclaim` to release it.'
+        ? `Comment \`claim <when>\` to change the expiry (${changeHint}), \`claim\` again to renew, or \`disclaim\` to release it.`
         : 'Comment `disclaim` to release it once you\'re done.';
     await comment(repoOctokit, owner, repo, num, `${first}\n\n${second}`);
     core.info(`#${num}: auto-claimed for @${author}.`);

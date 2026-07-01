@@ -56,6 +56,10 @@ on:
         required: false
         type: string
         default: ''
+      claim-expiry-require-date:
+        required: false
+        type: boolean
+        default: false
       expiry-field:
         required: false
         type: string
@@ -167,6 +171,7 @@ jobs:
           auto-add-labels: ${{ inputs.auto-add-labels }}
           claim-on-open: ${{ inputs.claim-on-open }}
           claim-expiry-field: ${{ inputs.claim-expiry-field }}
+          claim-expiry-require-date: ${{ inputs.claim-expiry-require-date }}
           expiry-field: ${{ inputs.expiry-field }}
           default-ttl: ${{ inputs.default-ttl }}
           max-ttl: ${{ inputs.max-ttl }}

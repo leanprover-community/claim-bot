@@ -114,6 +114,24 @@ test('resolveExpiry: no maximum allows long claims', () => {
   assert.ok(r.ok)
 })
 
+test('resolveExpiry: requireDate refuses a duration', () => {
+  const r = resolveExpiry('6 months', NOW, DEFAULT, null, { requireDate: true })
+  assert.equal(r.ok, false)
+  if (!r.ok) assert.match(r.reason, /absolute date/)
+})
+
+test('resolveExpiry: requireDate still accepts a date', () => {
+  const r = resolveExpiry('2026-07-01', NOW, DEFAULT, MAX, { requireDate: true })
+  assert.ok(r.ok)
+  assert.equal(toStorage(r.expiry), '2026-07-01T23:59:59Z')
+})
+
+test('resolveExpiry: requireDate error message asks for a date, not a duration', () => {
+  const r = resolveExpiry('whenever', NOW, DEFAULT, MAX, { requireDate: true })
+  assert.equal(r.ok, false)
+  if (!r.ok) assert.doesNotMatch(r.reason, /duration/)
+})
+
 test('toStorage drops milliseconds, formatExpiry is human', () => {
   const d = new Date('2026-08-01T14:00:00.000Z')
   assert.equal(toStorage(d), '2026-08-01T14:00:00Z')
