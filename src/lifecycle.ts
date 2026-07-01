@@ -149,7 +149,11 @@ async function autoClaimOnOpen(
     if (!res.ok) {
       // A bad, oversized, or (when a date is required) non-date form value falls back to the
       // default; note it so the registrant sees their value wasn't used and can fix it with `claim`.
-      if (fromForm) expiryNote = ` I couldn't read "${fromForm}" as ${cfg.claimExpiryRequireDate ? 'a date' : 'an expiry'}, so I've used the default for now.`
+      if (fromForm) {
+        expiryNote = cfg.claimExpiryRequireDate
+          ? ` I couldn't use "${fromForm}" — this project needs an absolute date like \`2026-09-01\` — so I've used the default for now.`
+          : ` I couldn't read "${fromForm}" as an expiry, so I've used the default for now.`
+      }
       res = resolveExpiry('', now, cfg.defaultTtl, cfg.maxTtlMs)
     }
     if (res.ok) {
@@ -163,8 +167,10 @@ async function autoClaimOnOpen(
   let first = `@${author} you're now registered as working on this — no extra step needed.`
   if (expiry) first += ` This registration expires **${formatExpiry(expiry)}**.`
   if (expiryNote) first += expiryNote
+  // When the form requires an absolute date, don't advertise a duration example the form would reject.
+  const changeHint = cfg.claimExpiryRequireDate ? 'e.g. `claim 2026-09-01`' : 'e.g. `claim 2 weeks` or `claim 2026-09-01`'
   const second = expiryEnabled(cfg)
-    ? 'Comment `claim <when>` to change the expiry (e.g. `claim 2 weeks` or `claim 2026-09-01`), `claim` again to renew, or `disclaim` to release it.'
+    ? `Comment \`claim <when>\` to change the expiry (${changeHint}), \`claim\` again to renew, or \`disclaim\` to release it.`
     : 'Comment `disclaim` to release it once you\'re done.'
   await comment(repoOctokit, owner, repo, num, `${first}\n\n${second}`)
   core.info(`#${num}: auto-claimed for @${author}.`)
