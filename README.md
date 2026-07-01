@@ -243,6 +243,7 @@ All inputs (set on the reusable workflow):
 | `auto-add-labels` | `` (all) | comma-separated label allowlist for auto-add; if set, only opened issues carrying one of these labels are added (e.g. `intention`) |
 | `claim-on-open` | `false` | auto-claim a newly opened (auto-added) issue for its author, so registering needs only the issue form and no separate `claim` comment |
 | `claim-expiry-field` | `` | issue-form field label to read the auto-claim expiry from (e.g. `Credible expiry date`); empty/missing/unparseable falls back to `default-ttl`. Only used when `claim-on-open` is set |
+| `claim-expiry-require-date` | `false` | require `claim-expiry-field` to be an absolute date (e.g. `2026-09-01`); a duration like `6 months` is refused and falls back to `default-ttl`, so the recorded expiry is a date readers see without doing the math. Only used when `claim-on-open` is set |
 | `terminal-statuses` | `In Review,Completed` | states where a `claim` comment is refused |
 | `expiry-field` | `Claim Expires` | Text field holding the ISO 8601 UTC expiry |
 | `note-field` | `Claim Note` | optional Text field holding the freeform claim note; ignored if absent |

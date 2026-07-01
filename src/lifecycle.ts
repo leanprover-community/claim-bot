@@ -139,11 +139,19 @@ async function autoClaimOnOpen(
   }
 
   let expiry: Date | null = null
+  let expiryNote = ''
   if (expiryEnabled(cfg)) {
     const fromForm = cfg.claimExpiryField ? readFormField(body, cfg.claimExpiryField) : null
     const now = new Date()
-    let res = resolveExpiry(fromForm ?? '', now, cfg.defaultTtl, cfg.maxTtlMs)
-    if (!res.ok) res = resolveExpiry('', now, cfg.defaultTtl, cfg.maxTtlMs) // bad/oversized form value -> default
+    let res = resolveExpiry(fromForm ?? '', now, cfg.defaultTtl, cfg.maxTtlMs, {
+      requireDate: cfg.claimExpiryRequireDate,
+    })
+    if (!res.ok) {
+      // A bad, oversized, or (when a date is required) non-date form value falls back to the
+      // default; note it so the registrant sees their value wasn't used and can fix it with `claim`.
+      if (fromForm) expiryNote = ` I couldn't read "${fromForm}" as ${cfg.claimExpiryRequireDate ? 'a date' : 'an expiry'}, so I've used the default for now.`
+      res = resolveExpiry('', now, cfg.defaultTtl, cfg.maxTtlMs)
+    }
     if (res.ok) {
       await setExpiry(octokit, ctx, itemId, toStorage(res.expiry))
       expiry = res.expiry
@@ -154,6 +162,7 @@ async function autoClaimOnOpen(
 
   let first = `@${author} you're now registered as working on this — no extra step needed.`
   if (expiry) first += ` This registration expires **${formatExpiry(expiry)}**.`
+  if (expiryNote) first += expiryNote
   const second = expiryEnabled(cfg)
     ? 'Comment `claim <when>` to change the expiry (e.g. `claim 2 weeks` or `claim 2026-09-01`), `claim` again to renew, or `disclaim` to release it.'
     : 'Comment `disclaim` to release it once you\'re done.'

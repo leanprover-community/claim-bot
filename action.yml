@@ -56,6 +56,10 @@ inputs:
     description: 'Issue-form field label to read the auto-claim expiry from (e.g. "Credible expiry date"). Empty, missing, or unparseable falls back to default-ttl. Only used when claim-on-open is true.'
     required: false
     default: ''
+  claim-expiry-require-date:
+    description: 'Require the claim-expiry-field value to be an absolute date (e.g. "2026-09-01"); a duration like "6 months" is refused and falls back to default-ttl. Keeps the recorded expiry a date a reader can see without knowing the claim date. Only used when claim-on-open is true.'
+    required: false
+    default: 'false'
   terminal-statuses:
     description: 'Comma-separated status names the bot recognizes but does not manage (claims here are refused cleanly).'
     required: false
